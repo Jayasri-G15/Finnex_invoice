@@ -48,7 +48,7 @@ async def login_google():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-async def sync_gmail_invoices_background(connection_id: str):
+async def sync_gmail_invoices_background(connection_id: str, days_back: int = 30):
     from app.database import AsyncSessionLocal
     from app.models import GmailConnection
     from app.services.sync_service import sync_gmail_invoices
@@ -60,7 +60,7 @@ async def sync_gmail_invoices_background(connection_id: str):
         )
         connection = result.scalars().first()
         if connection:
-            await sync_gmail_invoices(session, connection)
+            await sync_gmail_invoices(session, connection, days_back=days_back)
 
 @router.get("/google/callback")
 async def google_callback(
@@ -138,7 +138,7 @@ async def google_callback(
         await db.refresh(connection)
         
         # Trigger the sync workflow in the background to prevent HTTP timeouts
-        background_tasks.add_task(sync_gmail_invoices_background, str(connection.id))
+        background_tasks.add_task(sync_gmail_invoices_background, str(connection.id), 30)
         
         return RedirectResponse(url=f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/?sync=started")
         

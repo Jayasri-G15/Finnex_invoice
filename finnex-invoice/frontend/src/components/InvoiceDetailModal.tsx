@@ -1,7 +1,7 @@
 import { Download, X, Edit2, Check, XCircle, RefreshCw, FileText } from 'lucide-react'
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { updateInvoice } from '@/api/invoices'
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
+import { updateInvoice, fetchLedgers } from '@/api/invoices'
 
 export type LineItem = {
   description: string
@@ -30,6 +30,19 @@ export type Invoice = {
   line_items?: LineItem[] | null
   payment_terms?: string | null
   pdf_url?: string | null
+  email_direction?: string | null
+  financial_event?: string | null
+  transaction_type?: string | null
+  financial_impact?: string | null
+  cashflow?: string | null
+  event_status?: string | null
+  event_timestamp?: string | null
+  ledger_code?: string | null
+  ledger_name?: string | null
+  ledger_category?: string | null
+  ledger_group?: string | null
+  ledger_confidence?: number | null
+  document_type?: string | null
 }
 
 interface InvoiceDetailModalProps {
@@ -59,8 +72,9 @@ export const handleExportSingleCSV = (inv: Invoice) => {
     ['Invoice Number', inv.invoice_number || 'No Number'],
     ['Vendor Name', inv.vendor_name || 'Unknown Vendor'],
     ['Total Amount', (inv.total_amount || 0).toString()],
-    ['Currency', inv.currency || 'USD'],
+    ['Currency', inv.currency || 'INR'],
     ['Status', inv.status || 'pending'],
+    ['Document Type', inv.document_type || '—'],
     ['Category', inv.invoice_type || '—'],
     ['AI Confidence', `${inv.confidence_score || 0}%`],
     ['Invoice Date', inv.invoice_date || '—'],
@@ -123,13 +137,50 @@ export const LEDGER_CATEGORIES = [
   { code: 'ARC-03', label: 'Management Consulting (ARC-03)' },
 ]
 
+export const DOCUMENT_TYPES = [
+  { code: 'invoice', label: 'Invoice' },
+  { code: 'revenue_document', label: 'Revenue Document' },
+  { code: 'IOU', label: 'IOU' },
+  { code: 'payment_confirmation', label: 'Payment Confirmation' },
+  { code: 'payment_receipt', label: 'Payment Receipt' },
+  { code: 'purchase_order', label: 'Purchase Order' },
+  { code: 'quotation', label: 'Quotation' },
+  { code: 'credit_note', label: 'Credit Note' },
+  { code: 'debit_note', label: 'Debit Note' },
+  { code: 'bank_statement', label: 'Bank Statement' },
+  { code: 'renewal', label: 'Renewal' },
+  { code: 'expense_claim', label: 'Expense Claim' },
+  { code: 'reimbursement', label: 'Reimbursement' },
+  { code: 'other', label: 'Other' },
+]
+
 export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps) => {
+  const formatCurrency = (val: number) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      minimumFractionDigits: 2,
+    }).format(val)
+  }
+
+  const { data: ledgers = [] } = useQuery<{
+    id: string
+    ledger_code: string
+    ledger_name: string
+    ledger_category: string
+    ledger_group: string
+  }[]>({
+    queryKey: ['ledgers'],
+    queryFn: fetchLedgers,
+  })
+
   const queryClient = useQueryClient()
   const [isEditing, setIsEditing] = useState(false)
   const [status, setStatus] = useState(invoice.status || 'pending')
   const [approvalStatus, setApprovalStatus] = useState(invoice.approval_status || 'pending')
-  const [category, setCategory] = useState(invoice.invoice_type || '')
+  const [category, setCategory] = useState(invoice.ledger_code || '')
   const [notes, setNotes] = useState(invoice.notes || '')
+  const [docType, setDocType] = useState(invoice.document_type || 'other')
 
   const getPdfFullUrl = (pdfUrl: string) => {
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
@@ -144,7 +195,9 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
       status?: string
       approval_status?: string
       invoice_type?: string | null
+      ledger_code?: string | null
       notes?: string | null
+      document_type?: string | null
     }) => {
       return updateInvoice(invoice.id, payload)
     },
@@ -160,7 +213,9 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
       status,
       approval_status: approvalStatus,
       invoice_type: category || null,
-      notes: notes || null
+      ledger_code: category || null,
+      notes: notes || null,
+      document_type: docType || null
     })
   }
 
@@ -174,8 +229,9 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
   const handleCancel = () => {
     setStatus(invoice.status || 'pending')
     setApprovalStatus(invoice.approval_status || 'pending')
-    setCategory(invoice.invoice_type || '')
+    setCategory(invoice.ledger_code || '')
     setNotes(invoice.notes || '')
+    setDocType(invoice.document_type || 'other')
     setIsEditing(false)
   }
 
@@ -241,6 +297,32 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
                 )
               })()}
 
+              {/* Direction Badge */}
+              {(() => {
+                const direction = invoice.email_direction || 'MAIL_RECEIVED'
+                const colors = direction === 'MAIL_SENT' 
+                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' 
+                  : 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
+                return (
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${colors}`}>
+                    {direction === 'MAIL_SENT' ? 'Sent Email' : 'Received Email'}
+                  </span>
+                )
+              })()}
+
+              {/* Transaction Type Badge */}
+              {(() => {
+                const txType = invoice.transaction_type || 'EXPENSE'
+                const colors = txType === 'REVENUE' 
+                  ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' 
+                  : 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400'
+                return (
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${colors}`}>
+                    {txType}
+                  </span>
+                )
+              })()}
+
               {/* Duplicate warning */}
               {invoice.is_duplicate && (
                 <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-400 animate-pulse">
@@ -281,12 +363,12 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">Total Amount</span>
                   <span className="font-semibold text-base text-foreground">
-                    ${(invoice.total_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {formatCurrency(invoice.total_amount || 0)}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">Currency</span>
-                  <span className="font-medium text-foreground uppercase">{invoice.currency || 'USD'}</span>
+                  <span className="font-medium text-foreground uppercase">{invoice.currency || 'INR'}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">Confidence Score</span>
@@ -296,6 +378,12 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
                   <span className="text-muted-foreground">Payment Terms</span>
                   <span className="font-medium text-foreground">{invoice.payment_terms || '—'}</span>
                 </div>
+                <div className="flex justify-between items-center text-sm border-t border-border/20 pt-1.5">
+                  <span className="text-muted-foreground">Document Type</span>
+                  <span className="font-semibold text-foreground capitalize">
+                    {(invoice.document_type || '—').replace(/_/g, ' ')}
+                  </span>
+                </div>
                 
                 {/* Category Selection */}
                 <div className="flex flex-col gap-1.5 pt-1.5 border-t border-border/40">
@@ -304,19 +392,39 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
                     <select
                       value={category}
                       onChange={e => setCategory(e.target.value)}
-                      className="block w-full px-2.5 py-1.5 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                      className="block w-full px-2.5 py-1.5 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
                     >
-                      <option value="">Select Category...</option>
-                      {LEDGER_CATEGORIES.map(cat => (
-                        <option key={cat.code} value={cat.code}>
-                          {cat.code} - {cat.label}
+                      <option value="">Select Ledger...</option>
+                      {ledgers.map(cat => (
+                        <option key={cat.ledger_code} value={cat.ledger_code}>
+                          {cat.ledger_code} - {cat.ledger_name} ({cat.ledger_category})
                         </option>
                       ))}
+                      <option value="UNCATEGORIZED">UNCATEGORIZED - Uncategorized</option>
                     </select>
                   ) : (
-                    <span className="font-semibold text-foreground bg-primary/10 text-primary px-2 py-0.5 rounded text-xs w-fit">
-                      {category ? `${category} - ${LEDGER_CATEGORIES.find(c => c.code === category)?.label || 'Unknown'}` : 'Not Categorized'}
-                    </span>
+                    <div className="space-y-1">
+                      <span className="font-semibold text-foreground bg-primary/10 text-primary px-2 py-0.5 rounded text-xs w-fit inline-block">
+                        {invoice.ledger_code || 'Not Categorized'}
+                      </span>
+                      {invoice.ledger_code && invoice.ledger_code !== 'UNCATEGORIZED' && (
+                        <div className="text-[11px] space-y-1 mt-1 text-muted-foreground border-l-2 border-primary/25 pl-2">
+                          <p><strong>Name:</strong> <span className="text-foreground">{invoice.ledger_name}</span></p>
+                          <p><strong>Group:</strong> <span className="text-foreground">{invoice.ledger_group}</span></p>
+                          <p><strong>Category:</strong> <span className="text-foreground">{invoice.ledger_category}</span></p>
+                          <p>
+                            <strong>AI Confidence:</strong>{' '}
+                            <span className="text-foreground">
+                              {invoice.ledger_confidence !== null && invoice.ledger_confidence !== undefined
+                                ? invoice.ledger_confidence === 100.0
+                                  ? 'Manual Override'
+                                  : `${invoice.ledger_confidence.toFixed(1)}%`
+                                : '—'}
+                            </span>
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -353,6 +461,20 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
                         <option value="rejected">Rejected</option>
                       </select>
                     </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-muted-foreground text-sm">Document Type</span>
+                      <select
+                        value={docType}
+                        onChange={e => setDocType(e.target.value)}
+                        className="block w-full px-2.5 py-1.5 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                      >
+                        {DOCUMENT_TYPES.map(dt => (
+                          <option key={dt.code} value={dt.code}>
+                            {dt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -374,6 +496,35 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
                     </div>
                   </>
                 )}
+              </div>
+            </div>
+          </div>
+
+          {/* Communication Intelligence */}
+          <div className="space-y-4 pt-2">
+            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Communication Intelligence</h4>
+            <div className="bg-secondary/10 rounded-lg p-4 grid grid-cols-2 gap-4 border border-border/50">
+              <div className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground text-xs">Email Direction</span>
+                <span className="font-semibold text-foreground">{invoice.email_direction === 'MAIL_SENT' ? 'Sent Email (MAIL_SENT)' : 'Received Email (MAIL_RECEIVED)'}</span>
+              </div>
+              <div className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground text-xs">Financial Event</span>
+                <span className="font-semibold text-foreground bg-primary/10 text-primary px-2 py-0.5 rounded text-xs w-fit">{invoice.financial_event || 'RAISED'}</span>
+              </div>
+              <div className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground text-xs">Transaction Type</span>
+                <span className="font-semibold text-foreground">{invoice.transaction_type || 'EXPENSE'}</span>
+              </div>
+              <div className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground text-xs">Financial Impact</span>
+                <span className={`font-semibold ${invoice.financial_impact === 'INCREASE' ? 'text-green-500' : invoice.financial_impact === 'DECREASE' ? 'text-red-500' : 'text-foreground'}`}>
+                  {invoice.financial_impact || 'NONE'}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1 text-sm col-span-2 border-t border-border/40 pt-2">
+                <span className="text-muted-foreground text-xs">Cashflow Impact</span>
+                <span className="font-semibold text-foreground">{invoice.cashflow || 'NONE'}</span>
               </div>
             </div>
           </div>
@@ -433,10 +584,10 @@ export const InvoiceDetailModal = ({ invoice, onClose }: InvoiceDetailModalProps
                         <td className="px-4 py-2 font-medium">{item.description}</td>
                         <td className="px-4 py-2 text-right">{item.quantity ?? '—'}</td>
                         <td className="px-4 py-2 text-right">
-                          {item.unit_price !== undefined && item.unit_price !== null ? `$${Number(item.unit_price).toFixed(2)}` : '—'}
+                          {item.unit_price !== undefined && item.unit_price !== null ? formatCurrency(Number(item.unit_price)) : '—'}
                         </td>
                         <td className="px-4 py-2 text-right font-medium">
-                          {item.amount !== undefined && item.amount !== null ? `$${Number(item.amount).toFixed(2)}` : '—'}
+                          {item.amount !== undefined && item.amount !== null ? formatCurrency(Number(item.amount)) : '—'}
                         </td>
                       </tr>
                     ))}

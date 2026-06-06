@@ -10,8 +10,8 @@ import {
 } from '@tanstack/react-table'
 import { ArrowUpDown, ChevronLeft, ChevronRight, Search, Download, FileText, X, RefreshCw } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { fetchInvoices, triggerSync } from '@/api/invoices'
-import { InvoiceDetailModal, type Invoice, formatDateOnly } from '@/components/InvoiceDetailModal'
+import { fetchInvoices, triggerSync, fetchLedgers } from '@/api/invoices'
+import { InvoiceDetailModal, type Invoice, formatDateOnly, DOCUMENT_TYPES } from '@/components/InvoiceDetailModal'
 
 const columnHelper = createColumnHelper<Invoice>()
 
@@ -68,6 +68,63 @@ const columns = [
       )
     },
   }),
+  columnHelper.accessor('transaction_type', {
+    header: 'Tx Type',
+    cell: info => {
+      const val = info.getValue() || 'EXPENSE'
+      const colors = val === 'REVENUE' 
+        ? 'bg-green-105 text-green-800 dark:bg-green-900/30 dark:text-green-400' 
+        : 'bg-orange-105 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400'
+      return (
+        <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase ${colors}`}>
+          {val}
+        </span>
+      )
+    }
+  }),
+  columnHelper.accessor('document_type', {
+    header: 'Doc Type',
+    cell: info => {
+      const val = info.getValue() || 'other'
+      return (
+        <span className="px-2 py-0.5 rounded text-xs font-semibold capitalize bg-secondary text-secondary-foreground border border-border">
+          {val.replace(/_/g, ' ')}
+        </span>
+      )
+    }
+  }),
+  columnHelper.accessor('ledger_code', {
+    header: 'Ledger',
+    cell: info => {
+      const code = info.getValue()
+      const name = info.row.original.ledger_name
+      if (!code) return <span className="text-muted-foreground">—</span>
+      return (
+        <div className="flex flex-col gap-0.5 max-w-[150px]">
+          <span className="font-semibold text-foreground text-xs">{code}</span>
+          {name && <span className="text-[10px] text-muted-foreground truncate" title={name}>{name}</span>}
+        </div>
+      )
+    }
+  }),
+  columnHelper.accessor('financial_event', {
+    header: 'Event / Dir',
+    cell: info => {
+      const event = info.getValue() || 'RAISED'
+      const direction = info.row.original.email_direction || 'MAIL_RECEIVED'
+      const dirColors = direction === 'MAIL_SENT' 
+        ? 'text-blue-500 bg-blue-100/50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded text-[10px]' 
+        : 'text-purple-500 bg-purple-100/50 dark:bg-purple-900/20 px-1.5 py-0.5 rounded text-[10px]'
+      return (
+        <div className="flex flex-col gap-1 items-start">
+          <span className="font-semibold text-foreground text-xs">{event}</span>
+          <span className={`font-semibold uppercase tracking-wider ${dirColors}`}>
+            {direction === 'MAIL_SENT' ? 'Sent' : 'Received'}
+          </span>
+        </div>
+      )
+    }
+  }),
   columnHelper.accessor('received_at', {
     header: 'Received Date',
     cell: info => {
@@ -94,7 +151,7 @@ const columns = [
   columnHelper.accessor('total_amount', {
     header: 'Amount',
     cell: info => (
-      <span className="font-medium">${(info.getValue() || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+      <span className="font-medium">{new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(info.getValue() || 0)}</span>
     ),
   }),
   columnHelper.accessor('status', {
@@ -132,14 +189,29 @@ const columns = [
 ]
 
 export const Invoices = () => {
-  const [sorting, setSorting] = useState<SortingState>([])
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: 'received_at', desc: true }
+  ])
   const [searchQuery, setSearchQuery] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [txTypeFilter, setTxTypeFilter] = useState('all')
+  const [docTypeFilter, setDocTypeFilter] = useState('all')
+  const [directionFilter, setDirectionFilter] = useState('all')
+  const [eventFilter, setEventFilter] = useState('all')
+  const [ledgerFilter, setLedgerFilter] = useState('all')
   const [showOnlyOriginal, setShowOnlyOriginal] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [datePreset, setDatePreset] = useState('all')
+
+  const { data: ledgers = [] } = useQuery<{
+    ledger_code: string
+    ledger_name: string
+  }[]>({
+    queryKey: ['ledgers'],
+    queryFn: fetchLedgers
+  })
 
   const handleDatePresetChange = (preset: string) => {
     setDatePreset(preset)
@@ -154,26 +226,29 @@ export const Invoices = () => {
     if (preset === 'all') {
       setStartDate('')
       setEndDate('')
-    } else if (preset === 'this-month') {
-      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
-      const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-      setStartDate(formatDate(startOfMonth))
-      setEndDate(formatDate(endOfMonth))
+    } else if (preset === 'today') {
+      setStartDate(formatDate(today))
+      setEndDate(formatDate(today))
+    } else if (preset === 'last-7-days') {
+      const sevenDaysAgo = new Date()
+      sevenDaysAgo.setDate(today.getDate() - 7)
+      setStartDate(formatDate(sevenDaysAgo))
+      setEndDate(formatDate(today))
     } else if (preset === 'last-30-days') {
       const thirtyDaysAgo = new Date()
       thirtyDaysAgo.setDate(today.getDate() - 30)
       setStartDate(formatDate(thirtyDaysAgo))
       setEndDate(formatDate(today))
-    } else if (preset === 'before-a-month') {
-      const thirtyDaysAgo = new Date()
-      thirtyDaysAgo.setDate(today.getDate() - 30)
-      setStartDate('')
-      setEndDate(formatDate(thirtyDaysAgo))
-    } else if (preset === 'last-month') {
-      const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1)
-      const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0)
-      setStartDate(formatDate(startOfLastMonth))
-      setEndDate(formatDate(endOfLastMonth))
+    } else if (preset === 'last-90-days') {
+      const ninetyDaysAgo = new Date()
+      ninetyDaysAgo.setDate(today.getDate() - 90)
+      setStartDate(formatDate(ninetyDaysAgo))
+      setEndDate(formatDate(today))
+    } else if (preset === 'this-month') {
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+      const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+      setStartDate(formatDate(startOfMonth))
+      setEndDate(formatDate(endOfMonth))
     }
   }
 
@@ -225,6 +300,41 @@ export const Invoices = () => {
       }
     }
 
+    // 3b. Tx Type filter
+    if (txTypeFilter && txTypeFilter !== 'all') {
+      if ((inv.transaction_type || 'EXPENSE').toLowerCase() !== txTypeFilter.toLowerCase()) {
+        return false
+      }
+    }
+
+    // 3c. Direction filter
+    if (directionFilter && directionFilter !== 'all') {
+      if ((inv.email_direction || 'MAIL_RECEIVED').toLowerCase() !== directionFilter.toLowerCase()) {
+        return false
+      }
+    }
+
+    // 3f. Document Type filter
+    if (docTypeFilter && docTypeFilter !== 'all') {
+      if ((inv.document_type || 'other').toLowerCase() !== docTypeFilter.toLowerCase()) {
+        return false
+      }
+    }
+
+    // 3d. Event filter
+    if (eventFilter && eventFilter !== 'all') {
+      if ((inv.financial_event || 'RAISED').toLowerCase() !== eventFilter.toLowerCase()) {
+        return false
+      }
+    }
+
+    // 3e. Ledger filter
+    if (ledgerFilter && ledgerFilter !== 'all') {
+      if ((inv.ledger_code || 'UNCATEGORIZED').toLowerCase() !== ledgerFilter.toLowerCase()) {
+        return false
+      }
+    }
+
     // 4. Date filtering (compares YYYY-MM-DD on invoice_date)
     if (startDate) {
       if (!inv.invoice_date || inv.invoice_date < startDate) {
@@ -252,6 +362,7 @@ export const Invoices = () => {
       'Total Amount',
       'Currency',
       'Status',
+      'Document Type',
       'AI Confidence',
       'Received From',
       'Purpose/Notes'
@@ -273,8 +384,9 @@ export const Invoices = () => {
       escapeCsvValue(inv.invoice_date),
       escapeCsvValue(inv.due_date),
       inv.total_amount || 0,
-      escapeCsvValue(inv.currency || 'USD'),
+      escapeCsvValue(inv.currency || 'INR'),
       escapeCsvValue(inv.status),
+      escapeCsvValue(inv.document_type || 'other'),
       inv.confidence_score || 0,
       escapeCsvValue(inv.sender),
       escapeCsvValue(inv.notes)
@@ -378,7 +490,7 @@ export const Invoices = () => {
               <select
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
-                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
               >
                 <option value="all">All Statuses</option>
                 <option value="paid">Paid</option>
@@ -388,19 +500,105 @@ export const Invoices = () => {
               </select>
             </div>
 
+            {/* Tx Type Dropdown */}
+            <div className="col-span-1 lg:col-span-2">
+              <select
+                value={txTypeFilter}
+                onChange={e => setTxTypeFilter(e.target.value)}
+                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+              >
+                <option value="all">All Tx Types</option>
+                <option value="expense">Expense</option>
+                <option value="revenue">Revenue</option>
+              </select>
+            </div>
+
+            {/* Doc Type Dropdown */}
+            <div className="col-span-1 lg:col-span-2">
+              <select
+                value={docTypeFilter}
+                onChange={e => setDocTypeFilter(e.target.value)}
+                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+              >
+                <option value="all">All Doc Types</option>
+                {DOCUMENT_TYPES.map(dt => (
+                  <option key={dt.code} value={dt.code}>
+                    {dt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Email Direction Dropdown */}
+            <div className="col-span-1 lg:col-span-3">
+              <select
+                value={directionFilter}
+                onChange={e => setDirectionFilter(e.target.value)}
+                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+              >
+                <option value="all">All Directions</option>
+                <option value="mail_received">Received</option>
+                <option value="mail_sent">Sent</option>
+              </select>
+            </div>
+
+            {/* Financial Event Dropdown */}
+            <div className="col-span-1 lg:col-span-2">
+              <select
+                value={eventFilter}
+                onChange={e => setEventFilter(e.target.value)}
+                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+              >
+                <option value="all">All Events</option>
+                <option value="requested">Requested</option>
+                <option value="raised">Raised</option>
+                <option value="pending">Pending</option>
+                <option value="reminder">Reminder</option>
+                <option value="paid">Paid</option>
+                <option value="payment_completed">Payment Completed</option>
+                <option value="payment_received">Payment Received</option>
+                <option value="payment_confirmed">Payment Confirmed</option>
+                <option value="payment_overdue">Payment Overdue</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="renewal">Renewal</option>
+                <option value="refund">Refund</option>
+                <option value="partial_payment">Partial Payment</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+
+            {/* Ledger Dropdown */}
+            <div className="col-span-1 lg:col-span-2">
+              <select
+                value={ledgerFilter}
+                onChange={e => setLedgerFilter(e.target.value)}
+                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+              >
+                <option value="all">All Ledgers</option>
+                <option value="uncategorized">Uncategorized</option>
+                {ledgers.map(l => (
+                  <option key={l.ledger_code} value={l.ledger_code}>
+                    {l.ledger_code} - {l.ledger_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Date Preset Dropdown */}
             <div className="col-span-1 lg:col-span-2">
               <select
                 value={datePreset}
                 onChange={e => handleDatePresetChange(e.target.value)}
-                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                className="block w-full px-3 py-2 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
               >
                 <option value="all">All Time</option>
-                <option value="this-month">This Month</option>
-                <option value="last-month">Last Month</option>
+                <option value="today">Today</option>
+                <option value="last-7-days">Last 7 Days</option>
                 <option value="last-30-days">Last 30 Days</option>
-                <option value="before-a-month">Older than 30 Days</option>
-                <option value="custom">Custom Range</option>
+                <option value="last-90-days">Last 90 Days</option>
+                <option value="this-month">This Month</option>
+                <option value="custom">Custom Date Range</option>
               </select>
             </div>
 
@@ -433,14 +631,19 @@ export const Invoices = () => {
             </div>
 
             {/* Clear Filters Button */}
-            <div className="col-span-1 lg:col-span-1 flex items-center justify-end">
-              {(searchQuery || startDate || endDate || statusFilter !== 'all' || showOnlyOriginal || datePreset !== 'all') && (
+            <div className="col-span-1 lg:col-span-2 flex items-center justify-end">
+              {(searchQuery || startDate || endDate || statusFilter !== 'all' || txTypeFilter !== 'all' || docTypeFilter !== 'all' || directionFilter !== 'all' || eventFilter !== 'all' || ledgerFilter !== 'all' || showOnlyOriginal || datePreset !== 'all') && (
                 <button
                   onClick={() => {
                     setSearchQuery('')
                     setStartDate('')
                     setEndDate('')
                     setStatusFilter('all')
+                    setTxTypeFilter('all')
+                    setDocTypeFilter('all')
+                    setDirectionFilter('all')
+                    setEventFilter('all')
+                    setLedgerFilter('all')
                     setShowOnlyOriginal(false)
                     setDatePreset('all')
                   }}

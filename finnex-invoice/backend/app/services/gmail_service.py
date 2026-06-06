@@ -67,8 +67,8 @@ class GmailService:
 
     def fetch_invoice_emails(self, days_back: int = 30) -> List[Dict[str, Any]]:
         try:
-            # Broaden query to fetch emails with invoice-related terms OR PDF attachments
-            query = f"newer_than:{days_back}d (subject:(invoice OR bill OR receipt OR payment) OR filename:pdf)"
+            # Broaden query to fetch emails with financial communication-related terms OR PDF attachments
+            query = f"newer_than:{days_back}d (subject:(invoice OR bill OR receipt OR payment OR revenue OR IOU OR confirmation OR \"purchase order\" OR quotation OR quote OR \"credit note\" OR \"debit note\" OR statement OR renewal OR expense OR claim OR reimbursement) OR filename:pdf)"
             
             results = self.service.users().messages().list(userId='me', q=query).execute()
             messages = results.get('messages', [])
